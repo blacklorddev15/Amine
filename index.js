@@ -51,6 +51,7 @@ const http = require('http')
 
 const { Telegraf, Markup } = require('telegraf')
 const { startWebsitePairingLoop, registerWASocket } = require('./helper-varnox-neon')
+const net = require('node:net')
 const { startVarnoxBotLoop } = require('./helper-varnox-bot')
 const { query, hasDatabase, getWASocket } = require('./helper-varnox-neon')
 const pairing = require('./helper/pairing')
@@ -1053,7 +1054,18 @@ EliteProTech.ev.on("connection.update", async (s) => {
      lastDisconnect.error
  ) {
      const statusCode = lastDisconnect.error.output?.statusCode;
-     console.log(chalk.red(`[SESSION ${sessionId}] connection closed (${statusCode})`));
+
+     /**
+      * Say *why*, not just *how*.
+      *
+      * The status code alone cannot be acted on. This fork reports 408 for every
+      * network-layer failure - a reset connection, a DNS miss, a refused host and an idle drop
+      * all arrive as 408 - and each has a different fix. The underlying socket error was being
+      * thrown away here, so a blocked network looked exactly like a slow one.
+      */
+     const cause = lastDisconnect.error.message || 'no reason given';
+     const socketCode = lastDisconnect.error.data?.code || lastDisconnect.error.data?.message;
+     console.log(chalk.red(`[SESSION ${sessionId}] connection closed (${statusCode}) - ${cause}${socketCode ? ` [${socketCode}]` : ''}`));
 
      // stop this session's background timers before deciding what to do next
      try { (EliteProTech.__timers || []).forEach(t => clearInterval(t)) } catch {}
@@ -1066,7 +1078,26 @@ EliteProTech.ev.on("connection.update", async (s) => {
          if (opts.tgChatId && mainBot) {
              mainBot.telegram.sendMessage(opts.tgChatId, `🚪 +${opts.pairPhone || sessionId} logged out & removed.\nUse /pair to connect again.`).catch(() => {})
          }
+     } else if (!EliteProTech.authState?.creds?.registered) {
+         /**
+          * A session that has NOT finished pairing is never restarted.
+          *
+          * Restarting calls startSession again with the same opts, so pairPhone is still set and
+          * the code gets requested a second time on a fresh socket - which invalidates the first
+          * one. Whoever is watching sees the code change while they are typing it, and WhatsApp
+          * sees repeated code requests for a number that never completes, which is the road to
+          * the 401 "device logged out" that follows.
+          *
+          * So a dropped pairing is reported, not retried. Trying again stays the user's call.
+          */
+         pairing.markDisconnected(sessionId);
+         console.log(chalk.yellow(`[SESSION ${sessionId}] pairing was still in progress - not restarting, so the code shown above is now dead.`));
+         if (typeof EliteProTech.__pairingError === 'function') {
+             try { await EliteProTech.__pairingError(`The WhatsApp connection dropped before pairing finished (${cause}). Please try /pair again.`) } catch (_) {}
+         }
      } else {
+         // Already paired: reconnect as before. This is a bot going back online, not a code
+         // being reissued, so the aggressive retry is safe here.
          pairing.markDisconnected(sessionId);
          setTimeout(() => {
              startSession(sessionId, opts).catch(e => console.log(`[SESSION ${sessionId}] restart failed:`, e.message));
@@ -1544,8 +1575,57 @@ function setupTelegramBot() {
 //   LAUNCHER – owner session + every saved session + website bridge
 // ============================================================
 
+/**
+ * Say whether this container can actually reach WhatsApp.
+ *
+ * A dropped socket arrives as `connection closed (408)`, and 408 covers a reset connection, a
+ * DNS failure, a refused host and an idle drop. Inside a container the underlying cause is
+ * normally invisible, and the symptom is identical whether the host is blocking WhatsApp or
+ * WhatsApp is refusing us - so the bot checks for itself at boot and prints what it found.
+ *
+ * DNS first, then a real TCP connection: a name that resolves and a port that refuses are
+ * different problems, and only the second one is usually the host's doing.
+ */
+async function probeWhatsApp() {
+  const dns = require('node:dns').promises
+
+  for (const [host, port] of [['web.whatsapp.com', 443], ['g.whatsapp.net', 443]]) {
+    let address
+    try {
+      ({ address } = await dns.lookup(host))
+    } catch (e) {
+      console.log(chalk.red(`[NET] DNS lookup FAILED for ${host}: ${e.code || e.message}`))
+      continue
+    }
+
+    const outcome = await new Promise((resolve) => {
+      const sock = net.connect({ host, port, timeout: 8000 })
+      sock.once('connect', () => { sock.destroy(); resolve('ok') })
+      sock.once('timeout', () => { sock.destroy(); resolve('timed out after 8s') })
+      sock.once('error', (e) => { sock.destroy(); resolve(e.code || e.message) })
+    })
+
+    if (outcome === 'ok') console.log(chalk.green(`[NET] ${host}:${port} reachable (${address})`))
+    else console.log(chalk.red(`[NET] CANNOT reach ${host}:${port} (${address}) - ${outcome}`))
+  }
+
+  // Which protocol version this fork believes it should speak. A fork frozen at an old version
+  // handshakes fine and then has its stream closed straight after - one of the things a 408 can
+  // mean - so it is worth seeing at boot rather than inferring later.
+  try {
+    const { version, isLatest } = await fetchLatestBaileysVersion()
+    console.log(chalk.cyan(`[NET] WhatsApp web version ${version.join('.')}${isLatest ? ' (latest)' : ' (NOT latest - the fork may be stale)'}`))
+  } catch (e) {
+    console.log(chalk.red(`[NET] could not fetch the WhatsApp version: ${e.message}`))
+  }
+}
+
 async function launch() {
   console.log(chalk.cyanBright(`\n[BOOT] ${global.botname || 'ELITE-PRO-V1'} – multi-session pairing build\n`));
+
+  // Before anything else: can this box reach WhatsApp? Every confusing pairing failure starts
+  // here, and the answer is one line in the console.
+  await probeWhatsApp();
 
   mainBot = setupTelegramBot();
 

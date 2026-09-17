@@ -136,6 +136,44 @@ The bot waits 45 seconds, then says so. The console is the place to look — the
 what it claimed and any Baileys error. Common causes: the number is already linked to another
 WhatsApp session, or the code was requested but never entered.
 
+### If the connection drops before you finish pairing
+
+A pairing code is only good while the socket that asked for it stays open. If the connection dies
+between the code appearing and you entering it, the code is dead and the number cannot be linked.
+
+Watch the console for two lines in a row like this:
+
+```
+[PAIR web_254xxxxxxxxx] Code :  EJ91-8WAF
+[SESSION web_254xxxxxxxxx] connection closed (408) - ...
+```
+
+**408 is this fork's code for every network-layer failure.** A reset connection, a DNS miss, a
+refused port and an idle drop all arrive as 408, which is why the line now prints the underlying
+reason after the dash — `WebSocket Error (read ECONNRESET)`, `Connection was lost`, and so on. That
+suffix is the part that identifies the cause; the number on its own does not.
+
+The bot also probes its own connectivity at boot, before doing anything else:
+
+```
+[NET] web.whatsapp.com:443 reachable (57.144.153.32)
+[NET] g.whatsapp.net:443 reachable (57.144.153.33)
+[NET] WhatsApp web version 2.3000.1043857760 (latest)
+```
+
+If those lines say `CANNOT reach` or `DNS lookup FAILED`, the problem is the node's network, not
+this code — several free panels block WhatsApp to stop people running bots on them. Move to a
+different node or host and the pairing will start working with no code change.
+
+Two notes about what the bot deliberately does **not** do:
+
+- **It will not restart a session that has not finished pairing.** Restarting re-requests the code
+  on a fresh socket, which invalidates the code you are typing, and repeated requests are what end
+  in the `401` and `device logged out` that follows. A dropped pairing is reported instead, and
+  reconnecting is your call. Once a number *is* paired, reconnection works exactly as before.
+- **The code does not change on its own.** If you see a second code for the same number, the
+  socket was torn down and rebuilt — check the lines immediately above it.
+
 ## What works, and what does not
 
 Commands run through the same handler as WhatsApp, so they are driven by the same code. Two
@@ -177,6 +215,12 @@ bury everything else. To reconnect: create a new bot, replace `VARNOX_BOT_TOKEN`
 | `The bot token was refused` | The token is wrong, was revoked, or belongs to a bot that was deleted. Create a new bot. |
 | `Rate limited` | More than 120 calls a minute from this bot. The channel backs off for 30 seconds by itself. |
 | `Poll error: fetch failed` | No outbound internet, or DNS trouble on the node. It retries every 5 seconds. |
+| `[NET] CANNOT reach web.whatsapp.com:443` | The node is blocking WhatsApp. Move to another node or host. |
+| `[NET] DNS lookup FAILED` | The container has no working DNS. Usually a host fault. |
+| `... connection closed (408) - WebSocket Error (read ECONNRESET)` | Something reset the connection mid-session — typically a host firewall or NAT. The number on its own says nothing; the text after the dash does. |
+| `... connection closed (408) - Connection was lost` | The socket closed without a clean frame. Often the same host-side cause. |
+| `pairing was still in progress - not restarting` | Expected after the fixes. The code shown above it is dead; send `/pair` again. |
+| `device logged out - session removed` | WhatsApp invalidated the session. Usually the result of many failed attempts at one number — leave it a few minutes before trying again. |
 | Nothing arrives in Varnox | Check the bot was **started** — a bot with no conversation has no queue. Press Start. |
 
 ## Where it sits in the code
