@@ -52,7 +52,7 @@ const http = require('http')
 const { Telegraf, Markup } = require('telegraf')
 const { startWebsitePairingLoop, registerWASocket } = require('./helper-varnox-neon')
 const { startVarnoxBotLoop } = require('./helper-varnox-bot')
-const { query, hasDatabase } = require('./helper-varnox-neon')
+const { query, hasDatabase, getWASocket } = require('./helper-varnox-neon')
 const pairing = require('./helper/pairing')
 setupConsoleFilters()
 const PORT = process.env.PORT || 3000;
@@ -1589,7 +1589,9 @@ async function launch() {
   //    can register the request with Varnox or has to fall back to starting the session itself.
   startVarnoxBotLoop({
     handler: EliteProHandler,
-    pairing: { startSession, query: hasDatabase ? query : null },
+    // getWASocket lets /pair tell "already linked" from "WhatsApp refused", which are the same
+    // symptom with completely different fixes.
+    pairing: { startSession, query: hasDatabase ? query : null, getWASocket },
   });
 
   if (!TELEGRAM_TOKEN) {

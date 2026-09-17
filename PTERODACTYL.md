@@ -63,6 +63,7 @@ Pterodactyl → your server → **Startup** → add these two variables:
 |---|---|
 | `VARNOX_BOT_TOKEN` | the `vx_…` value you just copied |
 | `VARNOX_URL` | `https://varnox-chat.vercel.app` (only change this if you self-host Varnox) |
+| `VARNOX_PAIR_MODE` | optional — `direct` (default) or `queue`. See `/pair` below. |
 
 ### 4. Restart the server
 
@@ -106,29 +107,29 @@ instead**, then type the code. Punctuation in what you send is fine — `+234 70
 the same as `2347047504860`. A leading `0` is not: that is a national number, and the bot says so
 rather than failing later.
 
-### Why it goes through the database
+### Two modes, and why the default changed
 
-`/pair` does **not** start the session itself. It writes a row into `varnox_pairing_requests` — the
-same queue the website "Link WhatsApp" screen uses — and then waits for the code to appear on that
-row. The website pairing bridge, already running in this process, claims the request within a few
-seconds and generates the code.
+`VARNOX_PAIR_MODE` decides who asks WhatsApp for the code:
 
-That indirection is the point: the number is paired by the **same code path** as a website pairing,
-recorded against your account, and therefore **shows up in Varnox** afterwards. Starting a session
-directly from the chat would link WhatsApp just as well and leave Varnox believing nothing had
-happened — a number that works and is not listed.
+| Mode | What happens | When to use it |
+|---|---|---|
+| **`direct`** *(default)* | The bot calls `requestPairingCode` itself and reports what it gets back. Needs nothing but the session itself. | Almost always. |
+| **`queue`** | `/pair` writes a row into `varnox_pairing_requests` — the same queue the website "Link WhatsApp" screen uses — and the website pairing bridge claims it and generates the code. | If you want the number to **appear in Varnox** afterwards. Needs `NEON_DATABASE_URL` and the bridge running. |
 
-Two consequences worth knowing:
+`direct` is the default because it has the fewest things that can be absent. The queue route needs
+`NEON_DATABASE_URL`, the bridge loop running, **and** the row reaching the bridge — three ways to do
+nothing while looking like it tried.
 
-- **One at a time.** Varnox allows one live pairing request per account, so `/pair` for a second
-  number while the first is still in progress is refused with the number already in flight. It
-  expires after 15 minutes.
-- **The database is not needed to pair.** It is needed for Varnox to *know about* the pairing. With
-  `NEON_DATABASE_URL` unset the bot starts the session itself, the number connects and works
-  exactly as well, and the reply says plainly that it will not appear in Varnox. Nothing in the
-  session starter or the connection handler touches the database — the only thing that does is
-  recording the result.
+**A note on what each mode leaves behind.** A number paired on the `direct` route connects and works
+on WhatsApp exactly as well, but Varnox has no record of it, so it will not appear in your numbers
+list. Pair on the `queue` route, or through the Varnox screen, if you want it listed.
 
+Two further consequences:
+
+- **One at a time (queue mode).** Varnox allows one live pairing request per account, so `/pair` for
+  a second number while the first is in progress is refused by name. It expires after 15 minutes.
+- **Already linked.** If the number is already connected to this bot, WhatsApp will not issue a
+  second code and `/pair` says so directly, rather than waiting a minute and blaming the console.
 ### If no code comes back
 
 The bot waits 45 seconds, then says so. The console is the place to look — the pairing bridge logs

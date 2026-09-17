@@ -314,8 +314,33 @@ const isStart = (text) => /^\/?(start|help)$/i.test(text.trim());
  */
 const PAIR_TTL_MINUTES = 15;
 
-/** How long /pair waits for the code before answering without it. */
+/**
+ * How /pair asks for a code.
+ *
+ *   direct  the bot asks WhatsApp itself and reports the code it gets back. Needs nothing but the
+ *           session starter, so it works on a bot with no database at all.
+ *   queue   register the request in Varnox and let the website pairing bridge do it, which is what
+ *           makes the number appear in Varnox afterwards.
+ *
+ * Direct is the default because it has fewer things that can be absent: the queue route needs
+ * NEON_DATABASE_URL, the bridge loop running, and the row reaching the bridge. Every one of those
+ * is a way for /pair to do nothing while looking like it tried.
+ */
+const PAIR_MODE = String(process.env.VARNOX_PAIR_MODE || 'direct').trim().toLowerCase() === 'queue'
+  ? 'queue'
+  : 'direct';
+
+/** How long /pair waits for a code on the direct route. */
 const PAIR_WAIT_MS = 45_000;
+
+/**
+ * How long the direct route waits for the starter to hand back a code.
+ *
+ * Generous, because the starter is generous: it asks three seconds after the socket is up and
+ * retries up to three times with five seconds between, so a slow attempt can legitimately take
+ * twenty seconds. Longer than the queue route's wait, which only has to poll a row.
+ */
+const PAIR_CODE_WAIT_MS = Number(process.env.VARNOX_PAIR_WAIT_MS) || 60_000;
 
 /** How often it looks while waiting. */
 const PAIR_POLL_MS = 1_500;
@@ -419,31 +444,70 @@ async function pairThroughVarnox(number, query) {
 }
 
 /**
- * Pair without the database: ask the session starter directly.
+ * Ask the session starter for a code, and wait for it.
  *
- * The fallback for a bot running without NEON_DATABASE_URL. It connects WhatsApp exactly as well —
- * the starter is the same function the website route uses — but nothing is written to Varnox, so
- * the number works and is not listed there.
+ * THE WAIT IS THE WHOLE POINT
+ *
+ * `startSession` does not return the code. It brings the socket up, and then — three seconds later,
+ * and up to three times with five seconds between attempts — calls `requestPairingCode` and hands
+ * the result to `onPairingCode`. So the call resolving means "the socket exists", not "here is your
+ * code", and reading a variable straight afterwards finds it empty every single time.
+ *
+ * An earlier version of this did exactly that and told everybody the session had not returned a
+ * code. The fix is to wait on the callback, with a ceiling that covers the starter's own delay and
+ * retries.
+ *
+ * A number that is already linked is separated out, because it is the one failure with an
+ * obvious fix: `startSession` only requests a code when `creds.registered` is false, so an
+ * already-paired number never gets one — and "check the console" is the wrong advice for it.
  */
-async function pairDirectly(number, startSession) {
+async function pairDirectly(number, pairing) {
   const sessionId = `web_${number}`;
-  let code = null;
-  let failure = null;
+  const startSession = pairing && pairing.startSession;
+  const getSocket = pairing && pairing.getWASocket;
+
+  let deliver = () => {};
+  const codePromise = new Promise((resolve) => {
+    deliver = resolve;
+  });
 
   try {
     await startSession(sessionId, {
       pairPhone: number,
       source: 'varnox',
-      onPairingCode: async (generated) => {
-        code = String(generated);
+      onPairingCode: (generated) => {
+        if (generated) deliver(String(generated));
       },
     });
   } catch (err) {
-    failure = err && (err.message || String(err));
+    return { ok: false, why: `Pairing failed: ${err && (err.message || err)}` };
   }
 
-  if (code) return { ok: true, number, code, unlisted: true };
-  return { ok: false, why: failure ? `Pairing failed: ${failure}` : 'The session started but did not return a code. It may already be linked — check WhatsApp, or restart and try again.' };
+  // The socket exists by now, so its credential state can be read.
+  const sock = typeof getSocket === 'function' ? getSocket(sessionId) : null;
+  const registered = Boolean(sock && sock.authState && sock.authState.creds && sock.authState.creds.registered);
+  if (registered) {
+    return {
+      ok: false,
+      why:
+        `+${number} is already linked to this bot, so WhatsApp will not issue a new code. ` +
+        'Open WhatsApp on that phone → Linked devices, remove this bot, then send /pair again.',
+    };
+  }
+
+  const timer = setTimeout(() => deliver(null), PAIR_CODE_WAIT_MS);
+  const code = await codePromise;
+  clearTimeout(timer);
+
+  if (code) return { ok: true, number, code };
+
+  return {
+    ok: false,
+    why:
+      'WhatsApp did not return a pairing code within a minute. The console has the reason — look for ' +
+      '"[PAIR web_' + number + ']". The usual cause is a number that is already linked, or a request ' +
+      'that WhatsApp is rate limiting.',
+  };
 }
 
 /** What to say once there is a code. */
@@ -481,26 +545,27 @@ async function handlePair(argument, pairing) {
   const query = pairing && pairing.query;
   const startSession = pairing && pairing.startSession;
 
-  // Null when the bot has no database. The database is not needed to make the connection - it is
-  // needed for Varnox to know about it - so this is a choice between two working routes rather
-  // than between working and broken.
-  if (query) {
+  /**
+   * Queue mode means queue mode.
+   *
+   * The route is not silently swapped for the other one when it fails: falling back would connect
+   * the number by a path the operator did not choose, and the reply would not say which happened.
+   * A failure here is reported as a failure, with the mode named, so the next step is obvious.
+   */
+  if (PAIR_MODE === 'queue') {
+    if (!query) {
+      return 'Pairing is set to queue mode (VARNOX_PAIR_MODE=queue) but this bot has no database connection, so it cannot register the request. Set NEON_DATABASE_URL, or switch to VARNOX_PAIR_MODE=direct.';
+    }
     try {
       const result = await pairThroughVarnox(parsed.number, query);
       return result.ok ? codeReply(result) : result.why;
     } catch (err) {
-      // A database problem should not lose the pairing: fall through to the direct route, which
-      // needs nothing but the session starter.
-      console.error('[VARNOX] /pair through Varnox failed:', err && (err.message || err));
+      return `Pairing through Varnox failed: ${err && (err.message || err)}. Nothing was paired — check NEON_DATABASE_URL and VARNOX_URL.`;
     }
   }
 
-  if (!startSession) {
-    return 'This bot has no pairing available — it was started without a session starter.';
-  }
-
   try {
-    const result = await pairDirectly(parsed.number, startSession);
+    const result = await pairDirectly(parsed.number, pairing);
     return result.ok ? codeReply(result) : result.why;
   } catch (err) {
     return `Pairing failed: ${err && (err.message || err)}`;
