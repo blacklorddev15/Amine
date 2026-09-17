@@ -461,7 +461,7 @@ async function pairThroughVarnox(number, query) {
  * obvious fix: `startSession` only requests a code when `creds.registered` is false, so an
  * already-paired number never gets one — and "check the console" is the wrong advice for it.
  */
-async function pairDirectly(number, pairing) {
+async function pairDirectly(number, pairing, { listed = true } = {}) {
   const sessionId = `web_${number}`;
   const startSession = pairing && pairing.startSession;
   const getSocket = pairing && pairing.getWASocket;
@@ -499,7 +499,10 @@ async function pairDirectly(number, pairing) {
   const code = await codePromise;
   clearTimeout(timer);
 
-  if (code) return { ok: true, number, code };
+  // `unlisted` rides along so the reply can say the number will not show up in Varnox. Without a
+  // database it genuinely will not, and a successful pairing that then appears to have vanished
+  // from the numbers list is a confusing way to learn that.
+  if (code) return { ok: true, number, code, unlisted: !listed };
 
   return {
     ok: false,
@@ -565,7 +568,7 @@ async function handlePair(argument, pairing) {
   }
 
   try {
-    const result = await pairDirectly(parsed.number, pairing);
+    const result = await pairDirectly(parsed.number, pairing, { listed: Boolean(query) });
     return result.ok ? codeReply(result) : result.why;
   } catch (err) {
     return `Pairing failed: ${err && (err.message || err)}`;
