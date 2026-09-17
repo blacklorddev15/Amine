@@ -1,0 +1,150 @@
+```
+DON'T FORGET TO FORK 🍴 & STAR 🌟 OUR REPO🫠
+```
+---
+
+> **CURRENT BOT VERSION ➜ `1.1.1 ⚡`**
+---
+
+<a href="https://git.io/typing-svg">
+  <img src="https://readme-typing-svg.demolab.com?font=Black+Ops+One&size=50&pause=1000&color=1BAFBAFF&center=true&width=1200&height=100&lines=HEY%20DEAR%20WELCOME;TOO%20ELITE-PRO-V1%20BOT%20REPO;MULTI%20DEVICE%20WHATSAPP%20BOT;CREATED%20BY%20EliteProTech" alt="Typing SVG" />
+</a>
+
+
+<p align="center">
+  <a href="https://chat.whatsapp.com/E8STWOsLagiLgzAkhhliyQ">
+    <img alt=Support weight="10" src="https://i.ibb.co/2YMygjV5/img-5iovezeh.jpg"> 
+    </p>
+<p align="center"> 
+    </p>
+<p align="center">
+  <a aria-label="Join our chats" href="https://chat.whatsapp.com/E8STWOsLagiLgzAkhhliyQ" target="_blank">
+    <img alt="whatsapp" src="https://img.shields.io/badge/Join Group chat-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" />
+    <a align="center">
+  <a aria-label="Follow Channel" href="https://whatsapp.com/channel/0029VaXaqHII1rcmdDBBsd3g" target="_blank">
+    <img alt="whatsapp" src="https://img.shields.io/badge/Follow Channel-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" />
+</a>
+<a aria-label="Chat me" href="https://t.me/eliteprotechs" target="_blank">
+    <img alt="telegram" src="https://img.shields.io/badge/Telegram Group-24A1DE?style=for-the-badge&logo=telegram&logoColor=white" />
+  </a>
+</p>  
+   
+ ---
+## FIRST FORK THE REPOSITORY
+` CLICK THE FORK BUTTON BELOW `
+
+<a href="https://github.com/EliteProTech/ELITE-PRO-V1/fork"><img title="ELITE-PRO-V1" src="https://img.shields.io/badge/FORK-BOT%20REPO-h?color=indigo&style=for-the-badge&logo=stackshare"></a>
+  
+## PAIRING (TELEGRAM + WEBSITE) 🔐
+
+This build pairs **many users at the same time** — every paired number runs the full bot.
+
+Add these to your environment / `.env`:
+
+| Variable | What it is |
+| --- | --- |
+| `TELEGRAM_TOKEN` | Token of the Telegram bot users pair through |
+| `OWNER_TELEGRAM_ID` | Your Telegram user id (enables `/status`) |
+| `NEON_DATABASE_URL` | Postgres/Neon URL holding `varnox_pairing_requests` |
+| `PORT` | Health/landing page port (default `3000`) |
+
+**Telegram** — users send:
+
+- `/pair 2347047504860` — pair a number; the bot replies with the pairing code
+- `/listpaired`, `/refreshsession`, `/delpair 2347047504860`, `/status` (owner only)
+
+**Website** — the bot polls `varnox_pairing_requests` every 3s, claims a `pending` row,
+writes the code into `pairing_code` and sets `status` to `code_generated` / `connected` / `failed`.
+Connected pairs are also recorded in `varnox_sessions`.
+
+`SESSION_ID` in `.env` still works and boots as the owner's own session (`./session`).
+Every other paired number is stored in `./sessions/<sessionId>/`.
+
+
+## GET SESSION ID BELOW
+> **FROM PAIRING WEB**
+
+<a href='https://eliteprotech-pair.zone.id' target="_blank">
+  <img alt='Pairing Code' src='https://img.shields.io/badge/Get%20Pairing%20Code-orange?style=for-the-badge&logo=opencv&logoColor=black'/>
+</a>
+<br> 
+
+
+## DEPLOYMENT METHODS
+- Upload SESSION_ID (creds.json) on session folder or add it to your .env file: SESSION_ID=
+- Edit .env to your Choice.
+
+---
+
+## FOR PANEL DEPLOYMENT
+- Click on **[DOWNLOAD](https://github.com/EliteProTech/ELITE-PRO-V1/archive/refs/heads/main.zip)** to get zip file🗃.
+- Create a server on your panel
+- Upload zip file 🗃️
+- Unzip it and others
+- Start server
+---
+
+## OTHER DEPLOYMENT PLATFORMS
+- **Deploy on [Bot-Hosting.Net](https://bot-hosting.net/)** ***Free***
+- **Deploy on [Render](https://render.com)** ***Free***
+- **Deploy on [Katabump](https://dashboard.katabump.com/auth/login)** ***Free***
+- **Deploy on [Optiklink](https://optiklink.com/)** ***Free***
+- **Deploy on [Heroku](https://dashboard.heroku.com/new?template=https://github.com/EliteProTech/ELITE-PRO-V1)** ***Paid***
+- **Deploy on [EliteProTech-Host](https://eliteprotech-host.zone.id)** ***Paid***
+- **Deploy on [Prince-Host](https://host.princetechn.com/deploy-bot/ELITE-PRO-V1)** ***Paid***
+---
+
+## FOR TERMUX/SSH/UBUNTU
+```
+Before inputting these commands in termux... You have to extract the bot file in your internal storage. (Downloads folder)
+
+apt update && apt upgrade
+pkg update && pkg upgrade
+pkg install bash
+pkg install git -y
+pkg install nodejs -y 
+pkg install ffmpeg -y 
+pkg install wget
+pkg install imagemagick -y
+pkg install yarn
+termux-setup-storage
+cd /storage/emulated/0/Download/ELITE-PRO-V1-main
+yarn install
+npm start
+```
+---
+
+## FOR STARTING TERMUX AGAIN
+```
+cd /storage/emulated/0/Download/ELITE-PRO-V1-main
+npm start
+```
+---
+
+## FOR 24/7 ACTIVATION TERMUX/SSH/UBUNTU
+```
+bash
+npm i -g pm2 && pm2 start index.js && pm2 save && pm2 logs
+Paste this after the installation
+```
+---
+
+<p align="left">  
+  <!-- Website -->
+  <a href="https://eliteprotech.zone.id/" target="_blank" aria-label="ELITEPRO Website">  
+    <img alt="ELITEPRO Website" src="https://img.shields.io/badge/ELITEPRO WEB-25D366?style=for-the-badge&logo=internetexplorer&logoColor=white" />  
+  </a>  
+
+  <!-- Other Repo -->
+  <a href="https://github.com/EliteProTech/Elite-Pro-V2" target="_blank" aria-label="Other Repo">  
+    <img alt="Other Repo" src="https://img.shields.io/badge/OTHER REPO-0E1241?style=for-the-badge&logo=github&logoColor=white" />  
+  </a>  
+
+  <!-- YouTube -->
+  <a href="https://www.youtube.com/@eliteprotechs" target="_blank" aria-label="Subscribe on YouTube">  
+    <img alt="YouTube Channel" src="https://img.shields.io/badge/Subscribe-FF0000?style=for-the-badge&logo=youtube&logoColor=white" />  
+  </a>  
+</p>
+
+ --- 
+- Star ⭐ repo if you like this bot.

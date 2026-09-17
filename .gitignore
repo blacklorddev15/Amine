@@ -1,0 +1,13 @@
+# Secrets. The .env that was committed here belongs in the panel's startup variables, not in git.
+.env
+.env.local
+
+# Runtime state
+node_modules/
+session/
+sessions/
+database/temp/
+
+# Noise
+*.log
+.DS_Store
