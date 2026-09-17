@@ -52,6 +52,7 @@ const http = require('http')
 const { Telegraf, Markup } = require('telegraf')
 const { startWebsitePairingLoop, registerWASocket } = require('./helper-varnox-neon')
 const { startVarnoxBotLoop } = require('./helper-varnox-bot')
+const { query } = require('./helper-varnox-neon')
 const pairing = require('./helper/pairing')
 setupConsoleFilters()
 const PORT = process.env.PORT || 3000;
@@ -1581,7 +1582,13 @@ async function launch() {
   // 4) Varnox channel (the token API). This is what makes "Start" in Varnox work: the bot polls
   //    /api/v1/inbox with its own token and answers through the same API, so it needs no inbound
   //    port and nothing has to reach this container from outside.
-  startVarnoxBotLoop({ handler: EliteProHandler });
+  //    `pairing` is what lets /pair work: startSession creates the WhatsApp session, and query
+  //    lets it register the request in the same queue the website bridge above drains, so the
+  //    number ends up in Varnox rather than only in this process.
+  startVarnoxBotLoop({
+    handler: EliteProHandler,
+    pairing: { startSession, query },
+  });
 
   if (!TELEGRAM_TOKEN) {
     console.log(chalk.yellow('[TELEGRAM] TELEGRAM_TOKEN not set - Telegram pairing disabled.'));

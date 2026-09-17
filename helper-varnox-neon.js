@@ -172,4 +172,7 @@ module.exports = {
   registerWASocket,
   getWASocket,
   recordSession,
+  // Exported so the Varnox channel can put a pairing request into the same queue this loop drains,
+  // using the same pool rather than opening a second one against the same database.
+  query,
 };

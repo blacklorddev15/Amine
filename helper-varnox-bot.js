@@ -237,11 +237,215 @@ function greeting() {
     `Hi — ${name} here, answering from Varnox.`,
     '',
     `Commands ${commands}. Send ${prefix}menu to see them all.`,
+    '',
+    'Send /pair to connect a WhatsApp number to this bot, or /help for this again.',
     'Replies are text: anything that returns a photo, video or sticker has to be used on WhatsApp.',
   ].join('\n');
 }
 
 const isStart = (text) => /^\/?(start|help)$/i.test(text.trim());
+
+/* ── /pair: connecting a WhatsApp number ───────────────────────────────────── */
+
+/**
+ * How long a request this bot creates stays claimable.
+ *
+ * A pairing code is only useful while somebody is at their phone entering it, so this is short —
+ * the same window the website flow uses. A stale request that is still pending is one nobody
+ * finished, and leaving it claimable means the next /pair is refused for being "busy" with an
+ * attempt that ended twenty minutes ago.
+ */
+const PAIR_TTL_MINUTES = 15;
+
+/** How long /pair waits for the code before answering without it. */
+const PAIR_WAIT_MS = 45_000;
+
+/** How often it looks while waiting. */
+const PAIR_POLL_MS = 1_500;
+
+/**
+ * Whether the conversation is waiting for a number, and the owner's username once it is known.
+ *
+ * Module-level, which is right for this channel specifically: a bot has exactly one Varnox
+ * conversation, so there is exactly one thing this state can be about. Under Telegram or WhatsApp
+ * this would have to be keyed by chat.
+ */
+let awaitingPairNumber = false;
+let cachedOwnerUsername = null;
+
+/**
+ * Turn what somebody typed into an international number, or say why not.
+ *
+ * Punctuation is stripped rather than rejected — people paste "+234 704 750 4860" and there is no
+ * reason to make them clean it up. What is left has to be a real international number, and the two
+ * mistakes worth naming are a leading zero (a national format that needs the country code instead)
+ * and a length that cannot be one.
+ */
+function normaliseNumber(raw) {
+  const digits = String(raw == null ? '' : raw).replace(/[^0-9]/g, '');
+  if (!digits) {
+    return { ok: false, why: 'Send the number in full international format, digits only — for example 2347047504860.' };
+  }
+  if (digits.startsWith('0')) {
+    return { ok: false, why: 'Drop the leading 0 and use the country code instead — for example 2347047504860, not 07047504860.' };
+  }
+  if (digits.length < 8 || digits.length > 15) {
+    return { ok: false, why: `That is ${digits.length} digits, which cannot be a phone number. Send it in full international format, digits only.` };
+  }
+  return { ok: true, number: digits };
+}
+
+/** The Varnox account's username, fetched once from /me so /pair can find its user id. */
+async function ownerUsername() {
+  if (cachedOwnerUsername) return cachedOwnerUsername;
+  const res = await request('GET', '/me');
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => ({}));
+  cachedOwnerUsername = (data.owner && data.owner.username) || null;
+  return cachedOwnerUsername;
+}
+
+/**
+ * Ask Varnox to pair the number, and wait for the code.
+ *
+ * This is the preferred route, and it is preferred for a reason: the request lands in the same
+ * queue the website pairing bridge drains, so the number is paired by the same code path, recorded
+ * against the same account, and shows up in Varnox afterwards. Doing the pairing here directly
+ * would connect WhatsApp just as well and leave Varnox convinced nothing had happened — the number
+ * would work and would not be listed.
+ *
+ * The insert is guarded by the same "one live request per account" rule the website applies, so
+ * /pair twice in a row answers the second time with the thing already in flight rather than
+ * starting a second session for the same number.
+ */
+async function pairThroughVarnox(number, query) {
+  const username = await ownerUsername();
+  if (!username) return { ok: false, why: 'Could not read the Varnox account for this bot. Check VARNOX_URL and try again.' };
+
+  const users = await query('select id from vx_users where lower(username) = lower($1) limit 1', [username]);
+  if (!users.rows.length) return { ok: false, why: `No Varnox account found for @${username}.` };
+  const userId = users.rows[0].id;
+
+  const live = await query(
+    `select id, phone from varnox_pairing_requests
+      where user_id = $1 and status in ('pending','processing') and expires_at > now()
+      order by id desc limit 1`,
+    [userId]
+  );
+  if (live.rows.length && String(live.rows[0].phone) !== number) {
+    return { ok: false, why: `A pairing for +${live.rows[0].phone} is already in progress. Finish or wait for it to expire.` };
+  }
+
+  if (!live.rows.length) {
+    await query(
+      `insert into varnox_pairing_requests (user_id, phone, status, expires_at, created_at, updated_at)
+       values ($1, $2, 'pending', now() + ($3 || ' minutes')::interval, now(), now())`,
+      [userId, number, PAIR_TTL_MINUTES]
+    );
+  }
+
+  const requestId = live.rows.length
+    ? live.rows[0].id
+    : (await query('select id from varnox_pairing_requests where user_id = $1 order by id desc limit 1', [userId])).rows[0].id;
+
+  // The website bridge picks the request up within a few seconds and writes the code onto it.
+  const deadline = Date.now() + PAIR_WAIT_MS;
+  while (Date.now() < deadline) {
+    const row = (await query('select status, pairing_code, error from varnox_pairing_requests where id = $1', [requestId])).rows[0];
+    if (row) {
+      if (row.error) return { ok: false, why: `Pairing failed: ${row.error}` };
+      if (row.pairing_code) return { ok: true, number, code: String(row.pairing_code) };
+    }
+    await sleep(PAIR_POLL_MS);
+  }
+  return { ok: false, why: 'The pairing request was made but no code came back in 45 seconds. Send /pair again to check.' };
+}
+
+/**
+ * Pair without the database: ask the session starter directly.
+ *
+ * The fallback for a bot running without NEON_DATABASE_URL. It connects WhatsApp exactly as well —
+ * the starter is the same function the website route uses — but nothing is written to Varnox, so
+ * the number works and is not listed there.
+ */
+async function pairDirectly(number, startSession) {
+  const sessionId = `web_${number}`;
+  let code = null;
+  let failure = null;
+
+  try {
+    await startSession(sessionId, {
+      pairPhone: number,
+      source: 'varnox',
+      onPairingCode: async (generated) => {
+        code = String(generated);
+      },
+    });
+  } catch (err) {
+    failure = err && (err.message || String(err));
+  }
+
+  if (code) return { ok: true, number, code, unlisted: true };
+  return { ok: false, why: failure ? `Pairing failed: ${failure}` : 'The session started but did not return a code. It may already be linked — check WhatsApp, or restart and try again.' };
+}
+
+/** What to say once there is a code. */
+function codeReply(result) {
+  const lines = [
+    `Pairing code for +${result.number}:`,
+    '',
+    `    ${result.code}`,
+    '',
+    'On that phone: WhatsApp → Settings → Linked devices → Link a device → Link with phone number instead, then type the code.',
+  ];
+  if (result.unlisted) {
+    lines.push(
+      '',
+      'Note: this bot has no database connection, so the number is connected here but will not appear in Varnox. Pair through the Varnox screen if you want it listed.'
+    );
+  }
+  return lines.join('\n');
+}
+
+/** `/pair`, or a bare number once /pair has asked for one. */
+async function handlePair(argument, pairing) {
+  const typed = String(argument == null ? '' : argument).trim();
+
+  if (!typed) {
+    awaitingPairNumber = true;
+    return 'Which number do you want to connect?\n\nSend it in full international format, digits only — for example 2347047504860. Send /cancel to stop.';
+  }
+
+  const parsed = normaliseNumber(typed);
+  if (!parsed.ok) return parsed.why;
+
+  awaitingPairNumber = false;
+
+  const query = pairing && pairing.query;
+  const startSession = pairing && pairing.startSession;
+
+  if (query) {
+    try {
+      const result = await pairThroughVarnox(parsed.number, query);
+      return result.ok ? codeReply(result) : result.why;
+    } catch (err) {
+      // A database problem should not lose the pairing: fall through to the direct route, which
+      // needs nothing but the session starter.
+      console.error('[VARNOX] /pair through Varnox failed:', err && (err.message || err));
+    }
+  }
+
+  if (!startSession) {
+    return 'This bot has no pairing available — it was started without a session starter.';
+  }
+
+  try {
+    const result = await pairDirectly(parsed.number, startSession);
+    return result.ok ? codeReply(result) : result.why;
+  } catch (err) {
+    return `Pairing failed: ${err && (err.message || err)}`;
+  }
+}
 
 /* ── running one message ───────────────────────────────────────────────────── */
 
@@ -257,10 +461,25 @@ const isStart = (text) => /^\/?(start|help)$/i.test(text.trim());
  * indistinguishable from a bot that is not running, which is exactly the confusion this whole
  * channel exists to avoid.
  */
-async function answer(text, handler) {
+async function answer(text, handler, pairing) {
   const trimmed = String(text == null ? '' : text).trim();
 
-  if (isStart(trimmed)) return greeting();
+  if (isStart(trimmed)) {
+    awaitingPairNumber = false;
+    return greeting();
+  }
+  if (/^\/?(pair)\b/i.test(trimmed)) {
+    return handlePair(trimmed.replace(/^\/?pair\b/i, '').trim(), pairing);
+  }
+  if (/^\/?(cancel|stop)\b/i.test(trimmed)) {
+    awaitingPairNumber = false;
+    return 'Cancelled.';
+  }
+  // A bare number is the answer to /pair's question, and nothing else is: a command still means a
+  // command, so somebody who changes their mind mid-pairing is not stuck.
+  if (awaitingPairNumber && !trimmed.startsWith('/') && !/^\S+\s/.test(trimmed)) {
+    return handlePair(trimmed, pairing);
+  }
   if (!trimmed) return 'Send a command. Send /start to see what this bot can do.';
   if (!handler) return 'This bot has no command handler loaded, so it can only greet.';
 
@@ -301,6 +520,9 @@ async function answer(text, handler) {
  */
 function startVarnoxBotLoop(options) {
   const handler = (options && options.handler) || null;
+  // What /pair needs: the session starter that creates a Baileys session, and (optionally) the
+  // database pool, so the request can be registered in Varnox rather than only in this process.
+  const pairing = (options && options.pairing) || null;
   announce();
   if (!enabled || typeof fetch !== 'function') return;
 
@@ -338,7 +560,7 @@ function startVarnoxBotLoop(options) {
         refusals = 0;
 
         for (const message of taken.messages) {
-          const body = await answer(message.body, handler);
+          const body = await answer(message.body, handler, pairing);
           const sent = await sendReply(message.id, body);
           if (!sent.ok) console.error(`[VARNOX] Could not reply to ${message.id}: ${sent.error}`);
         }
@@ -352,4 +574,4 @@ function startVarnoxBotLoop(options) {
   })();
 }
 
-module.exports = { startVarnoxBotLoop, answer, textOf, greeting };
+module.exports = { startVarnoxBotLoop, answer, textOf, greeting, normaliseNumber, handlePair };

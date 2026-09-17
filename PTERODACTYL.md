@@ -80,6 +80,59 @@ and restart again.
 Go to **/bots**, find your bot, press **Start**. Varnox opens the conversation and sends `/start`,
 and the bot answers — usually within a second or two.
 
+## `/pair` — connect a WhatsApp number from inside Varnox
+
+You do not need the panel for this and you do not need to visit another site. In the Varnox
+conversation:
+
+```
+you  /pair
+bot  Which number do you want to connect?
+     Send it in full international format, digits only — for example 2347047504860.
+
+you  2347047504860
+bot  Pairing code for +2347047504860:
+
+         ABCD-EFGH
+
+     On that phone: WhatsApp → Settings → Linked devices → Link a device → Link with
+     phone number instead, then type the code.
+```
+
+`/pair 2347047504860` does it in one message, and `/cancel` backs out.
+
+**On the phone:** WhatsApp → Settings → Linked devices → Link a device → **Link with phone number
+instead**, then type the code. Punctuation in what you send is fine — `+234 704 750 4860` is read
+the same as `2347047504860`. A leading `0` is not: that is a national number, and the bot says so
+rather than failing later.
+
+### Why it goes through the database
+
+`/pair` does **not** start the session itself. It writes a row into `varnox_pairing_requests` — the
+same queue the website "Link WhatsApp" screen uses — and then waits for the code to appear on that
+row. The website pairing bridge, already running in this process, claims the request within a few
+seconds and generates the code.
+
+That indirection is the point: the number is paired by the **same code path** as a website pairing,
+recorded against your account, and therefore **shows up in Varnox** afterwards. Starting a session
+directly from the chat would link WhatsApp just as well and leave Varnox believing nothing had
+happened — a number that works and is not listed.
+
+Two consequences worth knowing:
+
+- **One at a time.** Varnox allows one live pairing request per account, so `/pair` for a second
+  number while the first is still in progress is refused with the number already in flight. It
+  expires after 15 minutes.
+- **No database, no listing.** If `NEON_DATABASE_URL` is unset the bot falls back to starting the
+  session directly: the number connects and works, and the reply says plainly that it will not
+  appear in Varnox.
+
+### If no code comes back
+
+The bot waits 45 seconds, then says so. The console is the place to look — the pairing bridge logs
+what it claimed and any Baileys error. Common causes: the number is already linked to another
+WhatsApp session, or the code was requested but never entered.
+
 ## What works, and what does not
 
 Commands run through the same handler as WhatsApp, so they are driven by the same code. Two
@@ -87,6 +140,7 @@ differences are worth knowing before you go looking for a bug:
 
 | | |
 |---|---|
+| **`/pair` and `/start` are the channel's own** | They are handled by the channel rather than by the command handler, so they work even if a command fails. Everything else goes to the dispatcher. |
 | **Replies are text** | A command that returns a photo, video, sticker or file cannot deliver it here. Instead of going silent, the channel says so in the reply, so it is clear the command ran. Use WhatsApp for those. |
 | **Several messages become one** | Some commands send two or three WhatsApp messages in a row. Varnox takes one reply per message, so they are joined into a single message with blank lines between them. |
 
