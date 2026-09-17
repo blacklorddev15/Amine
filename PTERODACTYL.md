@@ -3,6 +3,27 @@
 This adds one thing to ELITE-PRO-V1: a **Varnox channel**. People can open your bot inside Varnox,
 press **Start**, and talk to it — and the bot's own commands answer there, not just on WhatsApp.
 
+## READ THIS FIRST: two credentials in this repository need rotating
+
+The `.env` file shipped inside `98827c7_ELITE-PRO-V1-multipair.zip` contained live values, and that
+zip is committed to this **public** repository. It is still in the git history, so deleting it from
+the current tree does not undo the exposure:
+
+| What | Where it is | What to do |
+|---|---|---|
+| `TELEGRAM_TOKEN` | a Telegram bot token | Message **@BotFather** → `/revoke` → pick the bot → `/token` for a new one. |
+| `NEON_DATABASE_URL` | a Postgres connection string **including its password** | In Neon, reset the role's password, then update the connection string everywhere it is used — including Vercel's `DATABASE_URL`. |
+
+Anyone who read this repository has both. The database one is the serious one: it is the same
+database Varnox runs on, so it is read **and write** access to every account, every message and
+every pairing request.
+
+This commit stops the leak going forward — `.env` is now gitignored and the rebuilt zip excludes it
+— but history keeps a copy, and only rotating the values makes it worthless.
+
+**Where these belong instead:** Pterodactyl → your server → **Startup** → as variables. That is
+what the panel is for, and it is what `app.json` and `.env.example` now document.
+
 ## Why this works on a panel
 
 The bot **polls outwards**. It asks Varnox for new messages over HTTPS and posts its answers back.
