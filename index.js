@@ -52,7 +52,7 @@ const http = require('http')
 const { Telegraf, Markup } = require('telegraf')
 const { startWebsitePairingLoop, registerWASocket } = require('./helper-varnox-neon')
 const { startVarnoxBotLoop } = require('./helper-varnox-bot')
-const { query } = require('./helper-varnox-neon')
+const { query, hasDatabase } = require('./helper-varnox-neon')
 const pairing = require('./helper/pairing')
 setupConsoleFilters()
 const PORT = process.env.PORT || 3000;
@@ -1585,9 +1585,11 @@ async function launch() {
   //    `pairing` is what lets /pair work: startSession creates the WhatsApp session, and query
   //    lets it register the request in the same queue the website bridge above drains, so the
   //    number ends up in Varnox rather than only in this process.
+  //    `query` is passed only when there is a pool behind it, so /pair knows up front whether it
+  //    can register the request with Varnox or has to fall back to starting the session itself.
   startVarnoxBotLoop({
     handler: EliteProHandler,
-    pairing: { startSession, query },
+    pairing: { startSession, query: hasDatabase ? query : null },
   });
 
   if (!TELEGRAM_TOKEN) {

@@ -123,9 +123,11 @@ Two consequences worth knowing:
 - **One at a time.** Varnox allows one live pairing request per account, so `/pair` for a second
   number while the first is still in progress is refused with the number already in flight. It
   expires after 15 minutes.
-- **No database, no listing.** If `NEON_DATABASE_URL` is unset the bot falls back to starting the
-  session directly: the number connects and works, and the reply says plainly that it will not
-  appear in Varnox.
+- **The database is not needed to pair.** It is needed for Varnox to *know about* the pairing. With
+  `NEON_DATABASE_URL` unset the bot starts the session itself, the number connects and works
+  exactly as well, and the reply says plainly that it will not appear in Varnox. Nothing in the
+  session starter or the connection handler touches the database — the only thing that does is
+  recording the result.
 
 ### If no code comes back
 

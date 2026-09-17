@@ -172,6 +172,9 @@ module.exports = {
   registerWASocket,
   getWASocket,
   recordSession,
+  // Whether NEON_DATABASE_URL was set, as a value rather than as an exception. `query` throws when
+  // there is no pool, so a caller checking `if (query)` learns nothing and finds out by failing.
+  hasDatabase: Boolean(pool),
   // Exported so the Varnox channel can put a pairing request into the same queue this loop drains,
   // using the same pool rather than opening a second one against the same database.
   query,

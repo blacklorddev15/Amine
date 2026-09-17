@@ -424,6 +424,9 @@ async function handlePair(argument, pairing) {
   const query = pairing && pairing.query;
   const startSession = pairing && pairing.startSession;
 
+  // Null when the bot has no database. The database is not needed to make the connection - it is
+  // needed for Varnox to know about it - so this is a choice between two working routes rather
+  // than between working and broken.
   if (query) {
     try {
       const result = await pairThroughVarnox(parsed.number, query);
