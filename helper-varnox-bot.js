@@ -164,8 +164,24 @@ function textOf(content) {
  * already handles because it wraps them in catch blocks.
  */
 function makeSocket(collected) {
+  /**
+   * A method the channel cannot provide, failing with a sentence instead of a TypeError.
+   *
+   * Without these, a command that needs one dies on `EliteProTech.downloadAndSaveMediaMessage is
+   * not a function` — which is accurate and tells the person reading it nothing. This says what the
+   * command needed and why it is not here, and the channel's catch turns it into the reply.
+   *
+   * A plain throw rather than a silent success: a command that pretends to have sent a photo and
+   * did not is worse than one that says it could not.
+   */
+  const needsWhatsApp = (what) => async () => {
+    throw new Error(`${what} needs a WhatsApp connection, which the Varnox channel does not have. Try it on WhatsApp.`);
+  };
+
   return {
     user: { id: 'varnox-bot@vx', lid: '' },
+    // A real socket carries this; commands read it to decide whether the bot is in public mode.
+    public: false,
     // Identity resolution: there are no jids to decode here, so the value passes through.
     decodeJid: (jid) => (jid == null ? '' : String(jid)),
     sendMessage: async (_chat, content) => {
@@ -173,15 +189,56 @@ function makeSocket(collected) {
       if (text) collected.push(text);
       return { key: { id: `varnox-${Date.now()}` } };
     },
+    // Harmless and meaningless here, so they succeed quietly rather than erroring.
     readMessages: async () => {},
     sendPresenceUpdate: async () => {},
-    // Only a real WhatsApp chat can answer these two, and only group commands ask.
-    groupMetadata: async () => {
-      throw new Error('Varnox conversations are not WhatsApp groups');
+
+    /**
+     * Live event listeners get a sentence rather than silence.
+     *
+     * Some commands register for `messages.upsert` and wait for the next message. A no-op emitter
+     * would make them appear to work and then never fire — the one failure a person cannot
+     * diagnose. `off` and `emit` are no-ops because they only ever run during a command's own
+     * cleanup, where throwing would turn a working command into a failed one.
+     */
+    ev: {
+      on: () => {
+        throw new Error('Commands that listen for live WhatsApp events cannot run in the Varnox channel. Try it on WhatsApp.');
+      },
+      off: () => {},
+      emit: () => {},
     },
-    profilePictureUrl: async () => {
-      throw new Error('no WhatsApp profile picture in the Varnox channel');
-    },
+
+    // Group operations: a Varnox conversation is not a WhatsApp group, so there is nothing to act on.
+    groupMetadata: needsWhatsApp('Group information'),
+    groupParticipantsUpdate: needsWhatsApp('Group admin actions'),
+    groupSettingUpdate: needsWhatsApp('Group settings'),
+    groupRequestParticipantsUpdate: needsWhatsApp('Group join requests'),
+    groupRequestParticipantsList: needsWhatsApp('Group join requests'),
+    groupGetInviteInfo: needsWhatsApp('Group invite links'),
+    groupFetchAllParticipating: needsWhatsApp('the list of groups'),
+    groupUpdateSubject: needsWhatsApp('Changing a group subject'),
+    groupUpdateDescription: needsWhatsApp('Changing a group description'),
+
+    // Media: reading it out of a WhatsApp message, or converting and sending a sticker.
+    downloadAndSaveMediaMessage: needsWhatsApp('Downloading message media'),
+    downloadMediaMessage: needsWhatsApp('Downloading message media'),
+    sendImageAsSticker: needsWhatsApp('Sticker conversion'),
+    sendVideoAsSticker: needsWhatsApp('Sticker conversion'),
+    waUploadToServer: needsWhatsApp('Uploading media to WhatsApp'),
+
+    // Contact and profile operations.
+    profilePictureUrl: needsWhatsApp('Reading a WhatsApp profile picture'),
+    updateProfilePicture: needsWhatsApp('Changing a WhatsApp profile picture'),
+    updateProfileStatus: needsWhatsApp('Changing a WhatsApp status'),
+    updateBlockStatus: needsWhatsApp('Blocking a contact'),
+    presenceSubscribe: needsWhatsApp('Presence updates'),
+    onWhatsApp: needsWhatsApp('Checking a number against WhatsApp'),
+    newsletterMetadata: needsWhatsApp('Reading a channel'),
+
+    // Baileys internals that only an actual socket can answer.
+    relayMessage: needsWhatsApp('Low-level message sending'),
+    query: needsWhatsApp('Direct queries to WhatsApp'),
   };
 }
 
