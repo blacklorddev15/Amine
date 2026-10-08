@@ -1,0 +1,51 @@
+name: 24x7 Bot Runner
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
+  push:
+    branches: [ main, master, dev ]
+
+concurrency:
+  group: bot-runner-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          elif [ -f package.json ]; then
+            sudo apt-get install -y nodejs npm
+            npm install
+          else
+            pip install pyTelegramBotAPI telebot aiogram httpx
+          fi
+
+      - name: Run Bot Node
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          RUN_COMMAND="${{ secrets.RUN_COMMAND }}"
+          if [ -z "$RUN_COMMAND" ]; then
+            if [ -f bot.py ]; then RUN_COMMAND="python bot.py"
+            elif [ -f main.py ]; then RUN_COMMAND="python main.py"
+            elif [ -f index.js ]; then RUN_COMMAND="node index.js"
+            elif [ -f package.json ]; then RUN_COMMAND="npm start"
+            else RUN_COMMAND="python bot.py"
+            fi
+          fi
+          echo "Executing start command: $RUN_COMMAND"
+          eval $RUN_COMMAND
